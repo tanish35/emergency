@@ -1,33 +1,63 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { View, Text, Button, StyleSheet, Alert } from "react-native";
-import MapView, { Marker } from "react-native-maps";
+import MapView, { Marker, Polyline } from "react-native-maps";
 import * as Location from "expo-location";
-import { connectToSocket } from "../../../services/socketService";
-
-const ambulanceImage = require("../../../assets/images/ambulance.png");
+import axios from "axios";
+import io from "socket.io-client";
 
 interface LocationState {
   latitude: number;
   longitude: number;
 }
 
+interface Route {
+  distance: number;
+  duration: number;
+  eta: string;
+  geometry: {
+    type: string;
+    coordinates: [number, number][];
+  };
+}
+
+interface Ambulance {
+  ambulanceId: string;
+  latitude: number;
+  longitude: number;
+}
+
 const LiveTracker = () => {
-  const [ambulanceLocation, setAmbulanceLocation] = useState<LocationState>({
-    latitude: 28.6139,
-    longitude: 77.209,
-  });
   const [userLocation, setUserLocation] = useState<LocationState | null>(null);
+  const [ambulance, setAmbulance] = useState<Ambulance | null>(null);
+  const [route, setRoute] = useState<Route | null>(null);
+  const [socket, setSocket] = useState<any>(null);
+
+  const mapRef = useRef<MapView>(null);
 
   useEffect(() => {
-    const socket = connectToSocket((newLocation: LocationState) => {
-      setAmbulanceLocation({ ...newLocation });
-      // console.log("New ambulance location:", newLocation);
+    const newSocket = io("http://192.168.29.99:3001");
+    setSocket(newSocket);
+
+    newSocket.on("ambulanceLocation", (data) => {
+      if (ambulance && data.ambulanceId === ambulance.ambulanceId) {
+        setAmbulance({
+          ...ambulance,
+          latitude: data.latitude,
+          longitude: data.longitude,
+        });
+      }
+    });
+
+    newSocket.on("ambulanceArrived", (data) => {
+      if (ambulance && data.ambulanceId === ambulance.ambulanceId) {
+        Alert.alert("Arrival Alert", "Ambulance has arrived at your location!");
+      }
     });
 
     return () => {
-      socket.disconnect();
+      newSocket.close();
     };
-  }, []);
+  }, [ambulance]);
 
   const getUserLocation = async (): Promise<LocationState | null> => {
     let { status } = await Location.requestForegroundPermissionsAsync();
@@ -45,15 +75,58 @@ const LiveTracker = () => {
     return newUserLocation;
   };
 
+  const fitToUserLocation = (location: LocationState) => {
+    if (mapRef.current) {
+      mapRef.current.animateToRegion(
+        {
+          latitude: location.latitude,
+          longitude: location.longitude,
+          latitudeDelta: 0.005,
+          longitudeDelta: 0.005,
+        },
+        1000
+      );
+    }
+  };
+
   const handleEmergency = async () => {
     const location = await getUserLocation();
     if (location) {
-      Alert.alert(
-        "Emergency Alert",
-        `Your current location has been shared with emergency services.\n\nLatitude: ${location.latitude.toFixed(
-          4
-        )}\nLongitude: ${location.longitude.toFixed(4)}`
-      );
+      try {
+        const response = await axios.post(
+          "http://192.168.29.99:3000/api/emergency/getambulances",
+          {
+            latitude: location.latitude,
+            longitude: location.longitude,
+          }
+        );
+
+        if (response.status === 200) {
+          const newAmbulance = {
+            ambulanceId: response.data.ambulance.ambulanceId,
+            latitude: response.data.ambulance.latitude,
+            longitude: response.data.ambulance.longitude,
+          };
+          setAmbulance(newAmbulance);
+          setRoute(response.data.route);
+
+          setTimeout(() => {
+            fitMapToMarkers(location, newAmbulance);
+          }, 100);
+
+          Alert.alert(
+            "Emergency Alert",
+            `Ambulance dispatched!\nETA: ${new Date(
+              response.data.route.eta
+            ).toLocaleTimeString()}`
+          );
+        } else {
+          Alert.alert("Emergency Alert", "Failed to fetch ambulance data.");
+        }
+      } catch (error) {
+        console.error("Error fetching ambulance data:", error);
+        Alert.alert("Emergency Alert", "Failed to connect to the server.");
+      }
     } else {
       Alert.alert(
         "Emergency Alert",
@@ -62,43 +135,104 @@ const LiveTracker = () => {
     }
   };
 
+  const fitMapToMarkers = (user: LocationState, ambulance: Ambulance) => {
+    if (mapRef.current) {
+      const coordinates = [
+        { latitude: user.latitude, longitude: user.longitude },
+        { latitude: ambulance.latitude, longitude: ambulance.longitude },
+      ];
+
+      mapRef.current.fitToCoordinates(coordinates, {
+        edgePadding: {
+          top: 100,
+          right: 100,
+          bottom: 100,
+          left: 100,
+        },
+        animated: true,
+      });
+    }
+  };
+
+  useEffect(() => {
+    if (userLocation && ambulance) {
+      fitMapToMarkers(userLocation, ambulance);
+    }
+  }, [ambulance?.latitude, ambulance?.longitude]);
+
+  useEffect(() => {
+    const initializeLocation = async () => {
+      const location = await getUserLocation();
+      if (location) {
+        setTimeout(() => {
+          fitToUserLocation(location);
+        }, 500);
+      }
+    };
+
+    initializeLocation();
+  }, []);
+
+  const routeCoordinates = route?.geometry.coordinates.map(
+    ([longitude, latitude]) => ({
+      latitude,
+      longitude,
+    })
+  );
+
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>🚑 Ambulance Live Tracker</Text>
+      <Text style={styles.title}>🚑 Emergency Assistance</Text>
       <MapView
+        ref={mapRef}
         style={styles.map}
-        region={{
-          latitude: ambulanceLocation.latitude,
-          longitude: ambulanceLocation.longitude,
-          latitudeDelta: 0.01,
-          longitudeDelta: 0.01,
-        }}
+        initialRegion={
+          userLocation
+            ? {
+                latitude: userLocation.latitude,
+                longitude: userLocation.longitude,
+                latitudeDelta: 0.01,
+                longitudeDelta: 0.01,
+              }
+            : {
+                latitude: 0,
+                longitude: 0,
+                latitudeDelta: 0.01,
+                longitudeDelta: 0.01,
+              }
+        }
       >
-        <Marker coordinate={ambulanceLocation}>
-          <View style={styles.ambulanceContainer}>
-            <Text style={styles.emoji}>🚑</Text>
-          </View>
-        </Marker>
         {userLocation && (
-          <Marker coordinate={userLocation}>
+          <Marker coordinate={userLocation} title="Your Location">
             <View style={styles.userContainer}>
               <Text style={styles.emoji}>📍</Text>
             </View>
           </Marker>
         )}
+        {ambulance && (
+          <Marker
+            coordinate={{
+              latitude: ambulance.latitude,
+              longitude: ambulance.longitude,
+            }}
+            title="Nearest Ambulance"
+          >
+            <View style={styles.ambulanceContainer}>
+              <Text style={styles.emoji}>🚑</Text>
+            </View>
+          </Marker>
+        )}
+        {routeCoordinates && (
+          <Polyline
+            coordinates={routeCoordinates}
+            strokeColor="#007AFF"
+            strokeWidth={4}
+          />
+        )}
       </MapView>
 
       <View style={styles.buttonContainer}>
-        <Button
-          title="Emergency Contact"
-          onPress={() => alert("Emergency Contact Triggered")}
-          color="#007AFF"
-        />
-        <Button
-          title="Share My Location"
-          onPress={handleEmergency}
-          color="#FF3B30"
-        />
+        <Button title="Emergency" onPress={handleEmergency} color="#FF3B30" />
       </View>
     </View>
   );
@@ -114,6 +248,7 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: "bold",
     marginBottom: 16,
+    textAlign: "center",
   },
   map: {
     flex: 1,
@@ -132,7 +267,7 @@ const styles = StyleSheet.create({
   },
   buttonContainer: {
     flexDirection: "row",
-    justifyContent: "space-between",
+    justifyContent: "center",
   },
 });
 

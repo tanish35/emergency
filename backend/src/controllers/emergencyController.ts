@@ -2,6 +2,14 @@ import asyncHandler from "express-async-handler";
 import prisma from "../lib/prisma";
 import { Request, Response } from "express";
 import axios from "axios";
+import { Server } from "socket.io";
+import { DefaultEventsMap } from "socket.io/dist/typed-events";
+
+let io: Server<DefaultEventsMap, DefaultEventsMap, DefaultEventsMap>;
+
+export const initializeSocketIO = (socketIO: Server) => {
+  io = socketIO;
+};
 
 interface Ambulance {
   ambulanceId: string;
@@ -58,6 +66,43 @@ export const addAmbulance = asyncHandler(
   }
 );
 
+const simulateAmbulanceMovement = (
+  coordinates: [number, number][],
+  ambulanceId: string,
+  duration: number
+) => {
+  const reversedCoordinates = coordinates.slice().reverse();
+  const totalPoints = reversedCoordinates.length;
+
+  const totalUpdates = Math.floor(duration / 1);
+
+  const step = Math.max(1, Math.ceil(totalPoints / totalUpdates));
+
+  let currentIndex = 0;
+  let elapsedTime = 0;
+
+  const movementInterval = setInterval(() => {
+    if (currentIndex >= totalPoints || elapsedTime >= duration) {
+      clearInterval(movementInterval);
+      io.emit("ambulanceArrived", { ambulanceId });
+      return;
+    }
+
+    const currentPosition = {
+      latitude: reversedCoordinates[currentIndex][1],
+      longitude: reversedCoordinates[currentIndex][0],
+    };
+
+    io.emit("ambulanceLocation", {
+      ambulanceId,
+      ...currentPosition,
+    });
+
+    currentIndex = Math.min(currentIndex + step, totalPoints - 1);
+    elapsedTime += 1;
+  }, 1000);
+};
+
 export const getAmbulances = asyncHandler(
   async (req: Request, res: Response) => {
     const { latitude, longitude } = req.body;
@@ -98,6 +143,13 @@ export const getAmbulances = asyncHandler(
     const route = routeResponse.data.features[0];
     const distance = route.properties.segments[0].distance;
     const duration = route.properties.segments[0].duration;
+    const coordinates = route.geometry.coordinates;
+
+    simulateAmbulanceMovement(
+      coordinates,
+      nearestAmbulance.ambulanceId,
+      duration
+    );
 
     res.status(200).json({
       message: "Nearest ambulance and route retrieved successfully",
