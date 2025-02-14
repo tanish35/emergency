@@ -4,6 +4,7 @@ import { Request, Response } from "express";
 import axios from "axios";
 import { Server } from "socket.io";
 import { DefaultEventsMap } from "socket.io/dist/typed-events";
+import * as turf from "@turf/turf";
 
 let io: Server<DefaultEventsMap, DefaultEventsMap, DefaultEventsMap>;
 
@@ -69,36 +70,32 @@ export const addAmbulance = asyncHandler(
 const simulateAmbulanceMovement = (
   coordinates: [number, number][],
   ambulanceId: string,
-  duration: number
+  speed: number
 ) => {
   const reversedCoordinates = coordinates.slice().reverse();
-  const totalPoints = reversedCoordinates.length;
-
-  const totalUpdates = Math.floor(duration / 1);
-
-  const step = Math.max(1, Math.ceil(totalPoints / totalUpdates));
-
-  let currentIndex = 0;
+  const route = turf.lineString(reversedCoordinates);
+  const totalDistance = turf.length(route, { units: "kilometers" });
+  const duration = (totalDistance / speed) * 3600;
   let elapsedTime = 0;
 
   const movementInterval = setInterval(() => {
-    if (currentIndex >= totalPoints - 1 || elapsedTime >= duration) {
+    if (elapsedTime >= duration) {
       clearInterval(movementInterval);
       io.emit("ambulanceArrived", { ambulanceId });
       return;
     }
 
-    const currentPosition = {
-      latitude: reversedCoordinates[currentIndex][1],
-      longitude: reversedCoordinates[currentIndex][0],
-    };
+    const distanceTraveled = (elapsedTime / duration) * totalDistance;
+    const currentPosition = turf.along(route, distanceTraveled, {
+      units: "kilometers",
+    });
 
     io.emit("ambulanceLocation", {
       ambulanceId,
-      ...currentPosition,
+      latitude: currentPosition.geometry.coordinates[1],
+      longitude: currentPosition.geometry.coordinates[0],
     });
 
-    currentIndex = Math.min(currentIndex + step, totalPoints - 1);
     elapsedTime += 1;
   }, 1000);
 };
@@ -145,11 +142,7 @@ export const getAmbulances = asyncHandler(
     const duration = route.properties.segments[0].duration;
     const coordinates = route.geometry.coordinates;
 
-    simulateAmbulanceMovement(
-      coordinates,
-      nearestAmbulance.ambulanceId,
-      duration
-    );
+    simulateAmbulanceMovement(coordinates, nearestAmbulance.ambulanceId, 60);
 
     res.status(200).json({
       message: "Nearest ambulance and route retrieved successfully",
