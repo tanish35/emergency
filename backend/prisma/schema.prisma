@@ -12,3 +12,22 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
+
+
+// model Hospital {
+//   hospitalId    String     @id @default(cuid())
+//   name          String
+//   address       String
+//   location      Unsupported("geometry(Point, 4326)")
+//   ambulances    Ambulance[]
+//   createdAt     DateTime   @default(now())
+//   updatedAt     DateTime   @updatedAt
+// }
+
+model Ambulance {
+  ambulanceId   String     @id @default(cuid())
+  location      Unsupported("geography(Point, 4326)")
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @default(now()) @updatedAt
+}
+
