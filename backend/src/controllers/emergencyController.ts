@@ -82,7 +82,7 @@ const simulateAmbulanceMovement = (
   let elapsedTime = 0;
 
   const movementInterval = setInterval(() => {
-    if (currentIndex >= totalPoints || elapsedTime >= duration) {
+    if (currentIndex >= totalPoints - 1 || elapsedTime >= duration) {
       clearInterval(movementInterval);
       io.emit("ambulanceArrived", { ambulanceId });
       return;
