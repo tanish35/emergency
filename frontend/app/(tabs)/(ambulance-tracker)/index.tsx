@@ -35,7 +35,7 @@ const LiveTracker = () => {
   const mapRef = useRef<MapView>(null);
 
   useEffect(() => {
-    const newSocket = io("http://192.168.29.99:3001");
+    const newSocket = io("http://192.168.29.99:3000");
     setSocket(newSocket);
 
     newSocket.on("ambulanceLocation", (data) => {
